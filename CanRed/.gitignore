@@ -1,0 +1,17 @@
+# IDE
+.vscode/settings.json
+.vscode/tasks.json
+
+# Build directories
+build/
+crosscompilling
+
+# Database
+*.db
+
+# Private
+.env
+
+# Log Files
+*.log
+.gdb_history
