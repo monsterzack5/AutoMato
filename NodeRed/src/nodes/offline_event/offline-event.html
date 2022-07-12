@@ -1,0 +1,39 @@
+<script type="text/html" data-template-name="offline-event">
+
+    <!-- Flow Name -->
+<div class="form-row">
+    <label for="node-input-flow_name"><i class="fa fa-tag"></i>Flow Name</label>
+    <input type="text" id="node-input-flow_name" placeholder="Turn on the AC if it's raining">
+</div>
+
+<!-- Module -->
+<div class="form-row">
+    <label for="node-input-module_name"><i class="fa fa-tag"></i>Module</label>
+    <input type="text" id="node-input-module_name" placeholder="DHT22">
+</div>
+
+<!-- Every n <milliseconds|seconds|minutes|hours> -->
+<div class="form-row">
+    <label for="node-input-interval"><i class="fa fa-tag"></i>Every</label>
+    <input type="text" id="node-input-interval" style="width: 80px;">
+    <input type="text" id="node-input-interval_unit" style="width: 120px;">
+</div>
+
+<!-- When -->
+<div class="form-row">
+    <label style="width: auto; margin-left: 43%; margin-right: auto; font-size: 1.5rem;">When</label>
+</div>
+
+<!-- <function name> is <LT/GT/...> <input> -->
+<div class="form-row">
+    <input type="text" id="node-input-module_function" style="width: 200px;" placeholder="Get Humidity">
+    <input type="text" id="node-input-conditional" style="width: 60px;">
+    <input type="text" id="node-input-value_to_check" style="width: auto;">
+    <input type="hidden" id="node-input-value_to_check-type">
+</div>
+
+</script>
+
+<script type="text/html" data-help-name="offline-event">
+    <p>Defines the start of an offline event</p>
+</script>

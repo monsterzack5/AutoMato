@@ -1,0 +1,36 @@
+{
+    "compilerOptions": {
+        "incremental": true,
+        "target": "ES2018",
+        "module": "commonjs",
+        "lib": [
+            "es2018",
+            "esnext.asynciterable",
+            "dom"
+        ],
+        "sourceMap": true,
+        "outDir": "./dist",
+        "strict": true,
+        "noImplicitAny": true,
+        "strictNullChecks": true,
+        "alwaysStrict": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noFallthroughCasesInSwitch": true,
+        "esModuleInterop": true,
+        "removeComments": true,
+        "types": [
+            "node"
+        ],
+    },
+    "typeRoots": [
+        "src/@types",
+        "node_modules/@types"
+    ],
+    "include": [
+        "./src/**/*.ts"
+    ],
+    "exclude": [
+        "node_modules"
+    ]
+}
