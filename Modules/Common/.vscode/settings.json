@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "*.tcc": "cpp",
+        "cryptolorabase64ascii.h": "c"
+    }
+}
