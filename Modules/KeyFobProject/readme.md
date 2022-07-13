@@ -4,8 +4,8 @@ This project was created to test the capability of the AutoMato subsystem, and t
 
 # An Early Prototype of the Keyfob, 
 This version of the KeyFob used an ESP8266 to send AT Commands to the STM32WLE5JC, as it made testing and development easier. In the current version we program the STM32 directly.
-![Keyfob Front](Modules/KeyFobProject/Common/Images/keyfob_prototype_v1_front.jpeg)
-![Keyfob back](Modules/KeyFobProject/Common/Images/keyfob_prototype_v1_back.jpeg)
+![Keyfob Front](https://raw.githubusercontent.com/monsterzack5/AutoMato/development/Modules/KeyFobProject/Common/Images/keyfob_prototype_v1_front.jpeg)
+![Keyfob back](https://raw.githubusercontent.com/monsterzack5/AutoMato/development/Modules/KeyFobProject/Common/Images/keyfob_prototype_v1_back.jpeg)
 
 # About
 Using two STM32WLE5JC microcontrollers, this project uses P2P LoRa as the transmission protocol, and AES-GCM to secure the wireless communication. It contains 2 projects, the KeyFob itself, and the AutoMato module that stays inside of the car. The keyfob spends most of it's time in the lowest power state it can, whereas the module is intended to be connected to 12v power 24/7.
