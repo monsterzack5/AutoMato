@@ -88,6 +88,7 @@ void send_encryption_buffer_via_lora(uint8_t* buffer)
 
 bool encrypt_buffer(uint8_t* buffer, MessageParameters& params)
 {
+
     cipher_ctx init;
 
     init.keylen = 16;
@@ -239,7 +240,7 @@ bool init_button()
         return false;
     }
 
-    auto button_config_rc = gpio_pin_configure_dt(&button, GPIO_INPUT);
+    auto button_config_rc = gpio_pin_configure_dt(&button, GPIO_INPUT | GPIO_INT_DEBOUNCE);
     if (button_config_rc != 0) {
         printk("Error! Failed to configure the button! rc = %d\n", button_config_rc);
         return false;
