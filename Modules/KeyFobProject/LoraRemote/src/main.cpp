@@ -43,19 +43,15 @@ static nvs_fs filesystem;
 static const device* flash_device = DEVICE_DT_GET(FLASH_NODE);
 
 static const uint8_t IV_NVS_ID = 0;
-static const uint8_t IV_NVS_SIZE = 4;
+static const uint8_t IV_NVS_SIZE = sizeof(IV_t);
 
 static const uint8_t ROLLING_CODE_NVS_ID = 1;
-static const uint8_t ROLLING_CODE_NVS_SIZE = 4;
+static const uint8_t ROLLING_CODE_NVS_SIZE = sizeof(RollingCode_t);
 // ---
 
 // Crypto Setup
-// #define CRYPTO_DRV_NAME CONFIG_CRYPTO_MBEDTLS_SHIM_DRV_NAME
-// const device* crypto_device = device_get_binding(CRYPTO_DRV_NAME);
-
 #define CRYPTO_DRV_NAME CONFIG_CRYPTO_MBEDTLS_SHIM_DRV_NAME
 const device* crypto_device;
-
 // ---
 
 // Power state configuration, configured to enter "stop2"
@@ -69,11 +65,8 @@ pm_state_info power_state {
 };
 // ---
 
-static RollingCode_t rolling_code = 0;
-static IV_t iv = 0;
-static uint8_t output_buffer[ENCRYPTION_BUFFER_SIZE];
-
 // Button Callback
+static Command command_to_send = Command::NONE;
 void button_pressed(const device* dev, gpio_callback* cb,
     uint32_t pins)
 {
@@ -83,13 +76,9 @@ void button_pressed(const device* dev, gpio_callback* cb,
     k_sem_give(&button_sem);
 }
 
-void send_lora_message()
+void send_encryption_buffer_via_lora(uint8_t* buffer)
 {
-    int rc = lora_send(lora_dev, output_buffer, ENCRYPTION_BUFFER_SIZE);
-
-    printk("Sending buffer via lora, buffer contents:\n");
-    print_u8_array(output_buffer, sizeof(output_buffer));
-    printk("\n");
+    int rc = lora_send(lora_dev, buffer, ENCRYPTION_BUFFER_SIZE);
 
     if (rc != 0) {
         printk("Message failed to send!\n");
@@ -97,7 +86,7 @@ void send_lora_message()
     }
 }
 
-void aes_gcm_encrypt()
+bool encrypt_buffer(uint8_t* buffer, MessageParameters& params)
 {
     cipher_ctx init;
 
@@ -111,76 +100,117 @@ void aes_gcm_encrypt()
     init.flags = CAP_RAW_KEY | CAP_SYNC_OPS | CAP_SEPARATE_IO_BUFS;
 
     cipher_pkt encrypt_config;
-    encrypt_config.in_buf = &output_buffer[ENCRYPTION_START_INDEX];
+    encrypt_config.in_buf = &buffer[ENCRYPTION_START_INDEX];
     encrypt_config.in_len = ENCRYPTED_DATA_SIZE;
     encrypt_config.out_buf_max = ENCRYPTED_DATA_SIZE;
-    encrypt_config.out_buf = &output_buffer[ENCRYPTION_START_INDEX]; // Encrypt in place?
+    encrypt_config.out_buf = &buffer[ENCRYPTION_START_INDEX];
 
     cipher_aead_pkt gcm_op;
     gcm_op.ad = nullptr;
     gcm_op.ad_len = 0;
     gcm_op.pkt = &encrypt_config;
-    gcm_op.tag = &output_buffer[26 - 16]; // TODO: Not hardcode this
+    gcm_op.tag = &buffer[ENCRYPTION_BUFFER_SIZE - CRYPTO_AES_GCM_TAG_SIZE];
 
     if (cipher_begin_session(crypto_device, &init, CRYPTO_CIPHER_ALGO_AES, CRYPTO_CIPHER_MODE_GCM, CRYPTO_CIPHER_OP_ENCRYPT)) {
         printk("failed in if cipher begin session\n");
-        return;
+        return false;
     }
 
     gcm_op.pkt = &encrypt_config;
 
-    if (cipher_gcm_op(&init, &gcm_op, reinterpret_cast<uint8_t*>(&iv))) {
+    if (cipher_gcm_op(&init, &gcm_op, reinterpret_cast<uint8_t*>(&params.iv))) {
         printk("GCM mode ENCRYPT - Failed\n");
         cipher_free_session(crypto_device, &init);
+        return false;
     }
 
     cipher_free_session(crypto_device, &init);
+
+    return true;
 }
 
-void write_iv_and_rolling_code_to_flash()
+void update_encryption_buffer(uint8_t* buffer, const MessageParameters& params, Command command_code)
+{
+    // Clear the buffer, just to be safe.
+    memset(buffer, 0, ENCRYPTION_BUFFER_SIZE);
+
+    // Set marker byte
+    buffer[MARKER_BYTE_INDEX] = MARKER_BYTE;
+
+    // Set IV
+    memcpy(&buffer[IV_INDEX], &params.iv, sizeof(IV_t));
+
+    // Set rolling code
+    memcpy(&buffer[ROLLING_CODE_INDEX], &params.rolling_code, sizeof(RollingCode_t));
+
+    // Set command byte
+    buffer[COMMAND_CODE_INDEX] = static_cast<uint8_t>(command_code);
+}
+
+MessageParameters get_initial_message_parameters()
 {
 
-    uint8_t flash_write_buffer[4];
+    // in lieu of having a constexpr max() function,
+    // to use the size of whichever is larger (IV_t or RollingCode_t),
+    // setting this to 8 bytes is safe enough.
+    uint8_t flash_read_buffer[8];
+    memset(flash_read_buffer, 0, sizeof(flash_read_buffer));
 
-    // Write IV to disk
+    MessageParameters params;
+
+    // Read IV from disk
+    auto flash_read_rc = nvs_read(&filesystem, IV_NVS_ID, &flash_read_buffer, sizeof(IV_t));
+
+    if (flash_read_rc > 0) {
+        // IV is stored
+        memcpy(&params.iv, flash_read_buffer, sizeof(IV_t));
+    } else {
+        // IV is not stored
+        params.iv = IV_DEFAULT_VALUE;
+    }
+
+    memset(flash_read_buffer, 0, sizeof(flash_read_buffer));
+
+    flash_read_rc = nvs_read(&filesystem, ROLLING_CODE_NVS_ID, &flash_read_buffer, sizeof(RollingCode_t));
+
+    if (flash_read_rc > 0) {
+        // Rolling Code is stored
+        memcpy(&params.rolling_code, flash_read_buffer, sizeof(RollingCode_t));
+    } else {
+        // Rolling code is not stored
+        params.rolling_code = ROLLING_CODE_DEFAULT_VALUE;
+    }
+
+    return params;
+}
+
+MessageParameters get_next_message_params(MessageParameters& current_params)
+{
+    // Integer overflow is expected behavior here.
+    current_params.iv += 1;
+    current_params.rolling_code += 1;
+
+    uint8_t flash_write_buffer[8];
+
     memset(flash_write_buffer, 0, sizeof(flash_write_buffer));
-    memcpy(flash_write_buffer, &iv, sizeof(iv));
+    memcpy(flash_write_buffer, &current_params.iv, sizeof(IV_t));
 
-    auto flash_write_rc = nvs_write(&filesystem, IV_NVS_ID, flash_write_buffer, IV_NVS_SIZE);
+    auto flash_write_rc = nvs_write(&filesystem, IV_NVS_ID, flash_write_buffer, sizeof(IV_t));
+
     if (flash_write_rc < 0) {
         LOG_ERR("Failed to write IV to disk!");
     }
 
-    // Write Rolling Code to disk
     memset(flash_write_buffer, 0, sizeof(flash_write_buffer));
-    memcpy(flash_write_buffer, &rolling_code, sizeof(rolling_code));
+    memcpy(flash_write_buffer, &current_params.rolling_code, sizeof(RollingCode_t));
 
-    flash_write_rc = nvs_write(&filesystem, ROLLING_CODE_NVS_ID, flash_write_buffer, ROLLING_CODE_NVS_SIZE);
+    flash_write_rc = nvs_write(&filesystem, ROLLING_CODE_NVS_ID, flash_write_buffer, sizeof(RollingCode_t));
+
     if (flash_write_rc < 0) {
-        LOG_ERR("Failed to write Rolling Code to disk!");
+        LOG_ERR("Failed to write rolling code to disk!");
     }
-}
 
-void update_output_buffer(Command command)
-{
-
-    // Marker byte
-    output_buffer[MARKER_BYTE_INDEX] = MARKER_BYTE;
-
-    // IV
-    iv += 1;
-    memcpy(&output_buffer[IV_INDEX], &iv, sizeof(iv));
-
-    // Rolling Code
-    rolling_code += 1;
-    memcpy(&output_buffer[ROLLING_CODE_INDEX], &rolling_code, sizeof(rolling_code));
-
-    // Command Byte
-    output_buffer[COMMAND_CODE_INDEX] = static_cast<CommandCode_t>(command);
-
-    aes_gcm_encrypt();
-
-    write_iv_and_rolling_code_to_flash();
+    return current_params;
 }
 
 bool init_lora()
@@ -258,50 +288,12 @@ bool init_flash()
     return true;
 }
 
-void read_iv_and_rolling_code_from_flash()
-{
-    // 16 Bytes is what is given in the sample NVS implementation
-    // I am not entirely sure if the size changes per device, and/or
-    // if there is a macro to get the proper size, instead of hard
-    // coding it.
-    uint8_t flash_read_buffer[4];
-
-    // Read IV
-
-    memset(flash_read_buffer, 0, sizeof(flash_read_buffer));
-
-    auto flash_read_rc = nvs_read(&filesystem, IV_NVS_ID, &flash_read_buffer, IV_NVS_SIZE);
-
-    if (flash_read_rc > 0) {
-        // IV is stored
-        memcpy(&iv, flash_read_buffer, sizeof(iv));
-    } else {
-        // IV is not stored.
-        iv = IV_DEFAULT_VALUE;
-    }
-
-    // Read rolling code
-    memset(flash_read_buffer, 0, sizeof(flash_read_buffer));
-
-    flash_read_rc = nvs_read(&filesystem, ROLLING_CODE_NVS_ID, &flash_read_buffer, ROLLING_CODE_NVS_SIZE);
-
-    if (flash_read_rc > 0) {
-        // Rolling Code is stored
-        memcpy(&rolling_code, flash_read_buffer, sizeof(rolling_code));
-    } else {
-        // Rolling Code is not stored.
-        rolling_code = ROLLING_CODE_DEFAULT_VALUE;
-    }
-}
-
 void main()
 {
     init_lora();
     init_button();
     init_flash();
-    read_iv_and_rolling_code_from_flash();
 
-    // TODO: Convert to a macro
     crypto_device = device_get_binding(CRYPTO_DRV_NAME);
 
     if (!crypto_device) {
@@ -309,23 +301,32 @@ void main()
         return;
     }
 
-    memset(output_buffer, 0, sizeof(output_buffer));
+    uint8_t encryption_buffer[ENCRYPTION_BUFFER_SIZE];
+    memset(encryption_buffer, 0, sizeof(encryption_buffer));
+
+    auto params = get_initial_message_parameters();
 
     while (1) {
         // Go to sleep
-        // pm_power_state_set(power_state);
+        pm_power_state_set(power_state);
 
-        // Wait forever for the sem.
+        // Wait forever for the semaphore
         k_sem_take(&button_sem, K_FOREVER);
 
         // Wake up fully, so the CPU is actually fast enough
         // to encrypt the lora message.
-        // pm_power_state_exit_post_ops(power_state);
+        pm_power_state_exit_post_ops(power_state);
 
         // Update rolling code and IV
-        update_output_buffer(Command::LOCK_DOORS);
+        params = get_next_message_params(params);
+
+        update_encryption_buffer(encryption_buffer, params, command_to_send);
+
+        bool did_encrypt = encrypt_buffer(encryption_buffer, params);
 
         // Send the message
-        send_lora_message();
+        if (did_encrypt) {
+            send_encryption_buffer_via_lora(encryption_buffer);
+        }
     }
 }

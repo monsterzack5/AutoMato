@@ -42,7 +42,13 @@ static lora_modem_config LORA_CONFIG {
 const MarkerByte_t MARKER_BYTE = static_cast<MarkerByte_t>(~128);
 
 enum class Command : CommandCode_t {
+    NONE = 0,
     UNLOCK_DOORS = 9,
     LOCK_DOORS = 19,
     START_CAR = 29,
+};
+
+struct MessageParameters {
+    IV_t iv;
+    RollingCode_t rolling_code;
 };
