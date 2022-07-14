@@ -68,7 +68,7 @@ inline void print_u8_array(const uint8_t array[], const size_t array_size)
 #elif defined ZEPHYR
 #    include "print_bin.h"
 
-void print_u8_array(const uint8_t array[], const size_t array_size)
+inline void print_u8_array(const uint8_t array[], const size_t array_size)
 {
     for (size_t i = 0; i < array_size; i += 1) {
 
