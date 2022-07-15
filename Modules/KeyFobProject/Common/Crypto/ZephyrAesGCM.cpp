@@ -1,6 +1,9 @@
 #include "ZephyrAesGCM.h"
 #include <crypto/cipher.h>
+#include <logging/log.h>
 #include <zephyr.h>
+
+LOG_MODULE_REGISTER(ZephyrAesGCM);
 
 namespace {
 
@@ -45,7 +48,7 @@ bool crypto_aes_gcm_encrypt(uint8_t* from_buffer, uint8_t* to_buffer, uint8_t* t
     encrypt_config.out_buf = to_buffer;
 
     if (cipher_begin_session(crypto_device, &cipher_context, CRYPTO_CIPHER_ALGO_AES, CRYPTO_CIPHER_MODE_GCM, CRYPTO_CIPHER_OP_ENCRYPT)) {
-        printk("%s::ERROR: Failed to begin cipher session!\n", __PRETTY_FUNCTION__);
+        LOG_ERR("%s::ERROR: Failed to begin cipher session!\n", __PRETTY_FUNCTION__);
         return false;
     }
 
@@ -73,13 +76,13 @@ bool crypto_aes_gcm_decrypt(uint8_t* from_buffer, uint8_t* to_buffer, uint8_t* t
     decrypt_config.out_buf = to_buffer;
 
     if (cipher_begin_session(crypto_device, &cipher_context, CRYPTO_CIPHER_ALGO_AES, CRYPTO_CIPHER_MODE_GCM, CRYPTO_CIPHER_OP_DECRYPT)) {
-        printk("%s::ERROR: Failed to begin cipher session!\n", __PRETTY_FUNCTION__);
+        LOG_ERR("%s::ERROR: Failed to begin cipher session!\n", __PRETTY_FUNCTION__);
         return false;
     }
 
     gcm_aead_config.pkt = &decrypt_config;
     if (cipher_gcm_op(&cipher_context, &gcm_aead_config, iv)) {
-        printk("%s::ERROR: Failed to decrypt buffer!\n", __PRETTY_FUNCTION__);
+        LOG_ERR("%s::ERROR: Failed to decrypt buffer!\n", __PRETTY_FUNCTION__);
         cipher_free_session(crypto_device, &cipher_context);
         return false;
     }
