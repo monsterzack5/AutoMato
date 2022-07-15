@@ -1,17 +1,10 @@
 # CanRed Socket Interface
-CanRed can read, parse and handle messages from UNIX Domain sockets.
-The main way for external communication to CanRed, is through our JSON UNIX
-Socket API.
+CanRed can read, parse and handle messages from UNIX Domain sockets. The main way for external communication to CanRed, is through our JSON UNIX Socket API.
 
-CanRed listens for socket connections at `/tmp/CanRed/red.sock`. Clients are expected
-to connect and send a request first, that is valid JSON and conforms to our spec.
-Theres a few different kinds of requests, such as requesting a user command to be ran,
-getting the configuration or updating the configuration of a module, and injecting
-certain frames directly to a module, the last request is mainly used for testing.
+CanRed listens for socket connections at `/tmp/CanRed/red.sock`. Clients are expected to connect and send a request first, that is valid JSON and conforms to our spec. Theres a few different kinds of requests, such as requesting a user command to be ran, getting the configuration or updating the configuration of a module, and injecting certain frames directly to the CANBUS, the last use-case is mainly used for testing.
 
 ## Output Format Identifier
-For ease of using JSON, user function output's are returned as a String, with another
-JSON key being used to define the output type. Types Are:
+For ease of using JSON, user function output's are returned as a String, with another JSON key being used to define the output type. Types Are:
 
 ```
 Signed   32-bit: 1
