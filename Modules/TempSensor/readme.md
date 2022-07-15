@@ -1,0 +1,1 @@
+# A fully working example Module that can read from a DHT22 sensor.
