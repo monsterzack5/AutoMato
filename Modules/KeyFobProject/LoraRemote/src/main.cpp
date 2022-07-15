@@ -13,6 +13,7 @@
 #include <fs/nvs.h>
 #include <storage/flash_map.h>
 
+#include <ZephyrAesGCM.h>
 #include <crypto/cipher.h>
 
 // LoRa setup
@@ -84,50 +85,6 @@ void send_encryption_buffer_via_lora(uint8_t* buffer)
         printk("Message failed to send!\n");
         return;
     }
-}
-
-bool encrypt_buffer(uint8_t* buffer, MessageParameters& params)
-{
-
-    cipher_ctx init;
-
-    init.keylen = 16;
-
-    // TODO: Why would this not take a const ptr?
-    init.key.bit_stream = const_cast<uint8_t*>(AES_128_KEY);
-
-    init.mode_params.gcm_info.tag_len = 16;
-    init.mode_params.gcm_info.nonce_len = 4;
-    init.flags = CAP_RAW_KEY | CAP_SYNC_OPS | CAP_SEPARATE_IO_BUFS;
-
-    cipher_pkt encrypt_config;
-    encrypt_config.in_buf = &buffer[ENCRYPTION_START_INDEX];
-    encrypt_config.in_len = ENCRYPTED_DATA_SIZE;
-    encrypt_config.out_buf_max = ENCRYPTED_DATA_SIZE;
-    encrypt_config.out_buf = &buffer[ENCRYPTION_START_INDEX];
-
-    cipher_aead_pkt gcm_op;
-    gcm_op.ad = nullptr;
-    gcm_op.ad_len = 0;
-    gcm_op.pkt = &encrypt_config;
-    gcm_op.tag = &buffer[ENCRYPTION_BUFFER_SIZE - CRYPTO_AES_GCM_TAG_SIZE];
-
-    if (cipher_begin_session(crypto_device, &init, CRYPTO_CIPHER_ALGO_AES, CRYPTO_CIPHER_MODE_GCM, CRYPTO_CIPHER_OP_ENCRYPT)) {
-        printk("failed in if cipher begin session\n");
-        return false;
-    }
-
-    gcm_op.pkt = &encrypt_config;
-
-    if (cipher_gcm_op(&init, &gcm_op, reinterpret_cast<uint8_t*>(&params.iv))) {
-        printk("GCM mode ENCRYPT - Failed\n");
-        cipher_free_session(crypto_device, &init);
-        return false;
-    }
-
-    cipher_free_session(crypto_device, &init);
-
-    return true;
 }
 
 void update_encryption_buffer(uint8_t* buffer, const MessageParameters& params, Command command_code)
@@ -212,6 +169,21 @@ MessageParameters get_next_message_params(MessageParameters& current_params)
     }
 
     return current_params;
+}
+
+bool encrypt_buffer(uint8_t* buffer, const MessageParameters& params)
+{
+    uint8_t iv_buffer[Crypto::AES_GCM_IV_BUFFER_SIZE];
+
+    memset(iv_buffer, 0, sizeof(iv_buffer));
+    memcpy(iv_buffer, &params.iv, sizeof(IV_t));
+
+    return Crypto::crypto_aes_gcm_encrypt(
+        &buffer[ENCRYPTION_START_INDEX],
+        &buffer[ENCRYPTION_START_INDEX],
+        &buffer[ENCRYPTION_TAG_START_INDEX],
+        ENCRYPTED_DATA_SIZE,
+        iv_buffer);
 }
 
 bool init_lora()
@@ -302,6 +274,8 @@ void main()
         return;
     }
 
+    Crypto::crypto_aes_gcm_init(AES_128_KEY, 4, crypto_device);
+
     uint8_t encryption_buffer[ENCRYPTION_BUFFER_SIZE];
     memset(encryption_buffer, 0, sizeof(encryption_buffer));
 
@@ -324,7 +298,6 @@ void main()
         update_encryption_buffer(encryption_buffer, params, command_to_send);
 
         bool did_encrypt = encrypt_buffer(encryption_buffer, params);
-
         // Send the message
         if (did_encrypt) {
             send_encryption_buffer_via_lora(encryption_buffer);

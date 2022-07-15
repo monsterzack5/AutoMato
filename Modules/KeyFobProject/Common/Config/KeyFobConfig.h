@@ -28,7 +28,8 @@ const uint8_t COMMAND_CODE_INDEX = sizeof(RollingCode_t) + ROLLING_CODE_INDEX;
 const uint8_t ENCRYPTION_BUFFER_SIZE = COMMAND_CODE_INDEX + 1 + CRYPTO_AES_GCM_TAG_SIZE;
 const uint8_t ENCRYPTION_START_INDEX = ROLLING_CODE_INDEX;
 const uint8_t ENCRYPTED_DATA_SIZE = sizeof(RollingCode_t) + sizeof(CommandCode_t);
-
+// Always append the tag right after the encrypted data.
+const uint8_t ENCRYPTION_TAG_START_INDEX = ENCRYPTION_BUFFER_SIZE - 16;
 static lora_modem_config LORA_CONFIG {
     915000000u, // frequency
     BW_125_KHZ, // bandwidth,
