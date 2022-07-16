@@ -111,9 +111,7 @@ int main() {
 CanRed creates and listens to any socket connections to `/tmp/CanRed/red.sock`. This API can be used as an IPC system for any other programs running on the Raspberry Pi. Internally it's how NodeRed talks to CanRed, and vise versa.
 
 - ## Independent Sub-networks
-Modules can be connected to each other in all sorts of ways
-
-# {EXTRAPOLATE THIS}
+Modules can be connected to each other in all sorts of ways, this allows flexibility and the ability to overcome device number limits on busses if neccessary.
 
 For example, this is a perfectly valid setup:
 ```
