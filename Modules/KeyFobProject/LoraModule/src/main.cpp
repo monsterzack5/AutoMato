@@ -14,12 +14,24 @@
 #include <sys/util.h>
 #include <zephyr.h>
 
-// LoRa setup
-BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_ALIAS(lora0), okay),
-    "No default LoRa radio specified in DT");
-
 LOG_MODULE_REGISTER(lora_send);
+
+// LoRa setup
+BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_ALIAS(lora0), okay), "No default LoRa radio specified in Device Tree");
+
 static const device* lora_dev = DEVICE_DT_GET(DT_ALIAS(lora0));
+// ---
+
+// GPIO Setup
+
+BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_ALIAS(lockwire), okay), "Error, lockwire not defined in Device Tree");
+BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_ALIAS(unlockwire), okay), "Error, unlockwire not defined in Device Tree");
+BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_ALIAS(startwire), okay), "Error, startwire not defined in Device Tree");
+
+static const gpio_dt_spec lock_wire = GPIO_DT_SPEC_GET(DT_ALIAS(lockwire), gpios);
+static const gpio_dt_spec unlock_wire = GPIO_DT_SPEC_GET(DT_ALIAS(unlockwire), gpios);
+static const gpio_dt_spec start_wire = GPIO_DT_SPEC_GET(DT_ALIAS(startwire), gpios);
+
 // ---
 
 // NVS Setup
@@ -27,6 +39,7 @@ static nvs_fs filesystem;
 
 #define STORAGE_NODE DT_NODE_BY_FIXED_PARTITION_LABEL(storage)
 #define FLASH_NODE DT_MTD_FROM_FIXED_PARTITION(STORAGE_NODE)
+BUILD_ASSERT(DT_NODE_HAS_STATUS(FLASH_NODE, okay), "Error, Flash not enabled in prj.conf");
 
 static const device* flash_device = DEVICE_DT_GET(FLASH_NODE);
 
@@ -42,36 +55,23 @@ static const uint8_t ROLLING_CODE_NVS_SIZE = 4;
 const device* crypto_device;
 // ---
 
-// GPIO Setup
-// D5/PB5
-const device* lock_doors_device;
-const uint8_t lock_doors_pin = 5;
-// D9/PA9
-const device* unlock_doors_device;
-const uint8_t unlock_doors_pin = 9;
-
-// D10/PB10
-const device* start_car_device;
-const uint8_t start_car_pin = 10;
-// ---
-
 void handle_command(Command command)
 {
-    const auto blink_pin = [](const device* device, uint8_t pin) {
-        gpio_pin_set(device, pin, 1);
+    const auto blink_pin = [](const gpio_dt_spec& device) {
+        gpio_pin_set_dt(&device, 1);
         k_sleep(K_MSEC(20));
-        gpio_pin_set(device, pin, 0);
+        gpio_pin_set_dt(&device, 0);
     };
 
     switch (command) {
     case Command::LOCK_DOORS:
-        blink_pin(lock_doors_device, lock_doors_pin);
+        blink_pin(lock_wire);
         break;
     case Command::UNLOCK_DOORS:
-        blink_pin(unlock_doors_device, unlock_doors_pin);
+        blink_pin(unlock_wire);
         break;
     case Command::START_CAR:
-        blink_pin(start_car_device, start_car_pin);
+        blink_pin(start_wire);
         break;
     default:
         LOG_ERR("Invalid Command code passed to %s, Code = %u", __PRETTY_FUNCTION__, static_cast<uint8_t>(command));
@@ -187,19 +187,12 @@ void handle_lora_message(uint8_t* message_buffer, uint16_t message_size, Message
 
 bool init_gpio()
 {
+    int32_t configure_ret = 0;
+    configure_ret |= gpio_pin_configure_dt(&lock_wire, GPIO_OUTPUT);
+    configure_ret |= gpio_pin_configure_dt(&unlock_wire, GPIO_OUTPUT);
+    configure_ret |= gpio_pin_configure_dt(&start_wire, GPIO_OUTPUT);
 
-    bool ret = true;
-
-    lock_doors_device = device_get_binding("GPIOB");
-    ret &= gpio_pin_configure(lock_doors_device, 5, GPIO_OUTPUT);
-
-    unlock_doors_device = device_get_binding("GPIOA");
-    ret &= gpio_pin_configure(lock_doors_device, 9, GPIO_OUTPUT);
-
-    start_car_device = device_get_binding("GPIOB");
-    ret &= gpio_pin_configure(lock_doors_device, 10, GPIO_OUTPUT);
-
-    return true;
+    return configure_ret == 0;
 }
 
 void main()

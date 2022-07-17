@@ -1,0 +1,29 @@
+/ {
+
+    gpio_pins {
+        compatible = "gpio-leds";
+        
+        lock_wire: gpio_0 {
+            label = "Lock wire";
+			gpios = <&gpioa 0 GPIO_ACTIVE_HIGH>;
+        };
+
+        unlock_wire: gpio_1 {
+            label = "Unlock wire";
+			gpios = <&gpioa 9 GPIO_ACTIVE_HIGH>;
+        };
+
+        start_wire: gpio_2 {
+            label = "Start wire";
+			gpios = <&gpiob 10 GPIO_ACTIVE_HIGH>;
+        };
+
+    };
+
+    aliases {
+        lockwire = &lock_wire;
+        unlockwire = &unlock_wire;
+        startwire = &start_wire;
+    };
+
+};
