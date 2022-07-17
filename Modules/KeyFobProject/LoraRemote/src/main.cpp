@@ -25,14 +25,14 @@ static const device* lora_dev = DEVICE_DT_GET(DT_ALIAS(lora0));
 // ---
 
 // Button Setup
-#define SW1_NODE DT_ALIAS(sw1)
 static K_SEM_DEFINE(button_sem, 0, 1);
-#if !DT_NODE_HAS_STATUS(SW1_NODE, okay)
-#    error "Unsupported board: sw0 devicetree alias is not defined"
-#endif
 
-static const gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(SW1_NODE, gpios, { 0 });
-static gpio_callback button_cb_data;
+static const gpio_dt_spec lock_button = GPIO_DT_SPEC_GET(DT_ALIAS(lock), gpios);
+static const gpio_dt_spec unlock_button = GPIO_DT_SPEC_GET(DT_ALIAS(unlock), gpios);
+static const gpio_dt_spec start_button = GPIO_DT_SPEC_GET(DT_ALIAS(start), gpios);
+static gpio_callback lock_interrupt_callback;
+static gpio_callback unlock_interrupt_callback;
+static gpio_callback start_interrupt_callback;
 // ---
 
 // NVS Setup
@@ -52,7 +52,7 @@ static const uint8_t ROLLING_CODE_NVS_SIZE = sizeof(RollingCode_t);
 
 // Crypto Setup
 #define CRYPTO_DRV_NAME CONFIG_CRYPTO_MBEDTLS_SHIM_DRV_NAME
-const device* crypto_device;
+const device* crypto_device = nullptr;
 // ---
 
 // Power state configuration, configured to enter "stop2"
@@ -68,12 +68,23 @@ pm_state_info power_state {
 
 // Button Callback
 static Command command_to_send = Command::NONE;
-void button_pressed(const device* dev, gpio_callback* cb,
-    uint32_t pins)
+void button_pressed(const device* dev, gpio_callback* cb, uint32_t pins)
 {
     (void)dev;
     (void)cb;
-    (void)pins;
+
+    const uint32_t lock_doors_bitmask = BIT(lock_button.pin);
+    const uint32_t unlock_doors_bitmask = BIT(unlock_button.pin);
+    const uint32_t start_button_bitmask = BIT(start_button.pin);
+
+    if (pins == lock_doors_bitmask) {
+        command_to_send = Command::LOCK_DOORS;
+    } else if (pins == unlock_doors_bitmask) {
+        command_to_send = Command::UNLOCK_DOORS;
+    } else if (pins == start_button_bitmask) {
+        command_to_send = Command::START_CAR;
+    }
+
     k_sem_give(&button_sem);
 }
 
@@ -207,33 +218,44 @@ bool init_lora()
 
 bool init_button()
 {
-    if (!device_is_ready(button.port)) {
-        LOG_ERR("%s Device not ready", button.port->name);
-        return false;
-    }
+    const auto check_and_setup_button = [](const gpio_dt_spec& button, gpio_callback& button_callback) {
+        if (!device_is_ready(button.port)) {
+            LOG_ERR("%s reports as unready to use", button.port->name);
+            return false;
+        }
 
-    auto button_config_rc = gpio_pin_configure_dt(&button, GPIO_INPUT | GPIO_INT_DEBOUNCE);
-    if (button_config_rc != 0) {
-        printk("Error! Failed to configure the button! rc = %d\n", button_config_rc);
-        return false;
-    }
+        auto button_configure_rc = gpio_pin_configure_dt(&button, GPIO_INPUT | GPIO_INT_DEBOUNCE);
 
-    auto button_config_int_rc = gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_TO_ACTIVE);
-    if (button_config_int_rc != 0) {
-        printk("Error! Failed to configure the button! rc = %d\n", button_config_int_rc);
-        return false;
-    }
+        if (button_configure_rc != 0) {
+            LOG_ERR("Error! Failed to configure button settings. rc = %d\n", button_configure_rc);
+            return false;
+        }
 
-    gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
-    gpio_add_callback(button.port, &button_cb_data);
+        auto button_config_interrupt_rc = gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_TO_ACTIVE);
+        if (button_config_interrupt_rc != 0) {
+            LOG_ERR("Error! Failed to configure the button! rc = %d\n", button_config_interrupt_rc);
+            return false;
+        }
 
-    return true;
+        gpio_init_callback(&button_callback, button_pressed, BIT(button.pin));
+        gpio_add_callback(button.port, &button_callback);
+
+        return true;
+    };
+
+    bool configure_buttons_ret = true;
+
+    configure_buttons_ret &= check_and_setup_button(lock_button, lock_interrupt_callback);
+    configure_buttons_ret &= check_and_setup_button(unlock_button, unlock_interrupt_callback);
+    configure_buttons_ret &= check_and_setup_button(start_button, start_interrupt_callback);
+
+    return configure_buttons_ret;
 }
 
 bool init_flash()
 {
     if (!device_is_ready(flash_device)) {
-        printk("Flash device %s is not ready\n", flash_device->name);
+        LOG_ERR("Flash device %s is not ready\n", flash_device->name);
         return false;
     }
 
@@ -248,7 +270,7 @@ bool init_flash()
     }
 
     filesystem.sector_size = info.size;
-    filesystem.sector_count = 3U; // Why 3 Sectors?
+    filesystem.sector_count = 3U;
 
     auto nvs_rc = nvs_init(&filesystem, flash_device->name);
 
@@ -280,13 +302,15 @@ void main()
     memset(encryption_buffer, 0, sizeof(encryption_buffer));
 
     auto params = get_initial_message_parameters();
-
     while (1) {
         // Go to sleep
         pm_power_state_set(power_state);
 
         // Wait forever for the semaphore
         k_sem_take(&button_sem, K_FOREVER);
+        if (command_to_send == Command::NONE) {
+            continue;
+        }
 
         // Wake up fully, so the CPU is actually fast enough
         // to encrypt the lora message.
@@ -298,9 +322,11 @@ void main()
         update_encryption_buffer(encryption_buffer, params, command_to_send);
 
         bool did_encrypt = encrypt_buffer(encryption_buffer, params);
+
         // Send the message
         if (did_encrypt) {
             send_encryption_buffer_via_lora(encryption_buffer);
         }
+        command_to_send = Command::NONE;
     }
 }

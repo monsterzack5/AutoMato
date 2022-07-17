@@ -1,0 +1,28 @@
+/ {
+
+    gpio_keys {
+		compatible = "gpio-keys";
+		
+        lock_doors_button: button_1 {
+			label = "lock_doors_button D0";
+			gpios = <&gpioa 0 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+        };
+
+        unlock_doors_button: button_2 {
+			label = "lock_doors_button D9";
+			gpios = <&gpioa 9 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+        };
+	
+        start_car_button: button_3 {
+			label = "lock_doors_button D10";
+			gpios = <&gpiob 10 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+        };
+    
+    };
+
+    aliases {
+        lock = &lock_doors_button;
+        unlock = &unlock_doors_button;
+        start = &start_car_button;
+    };
+};
