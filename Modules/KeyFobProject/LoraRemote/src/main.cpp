@@ -3,6 +3,7 @@
 #include <device.h>
 #include <drivers/gpio.h>
 #include <drivers/lora.h>
+#include <init_helpers.h>
 #include <logging/log.h>
 #include <pm/pm.h>
 #include <print_u8_array.h>
@@ -202,25 +203,6 @@ bool encrypt_buffer(uint8_t* buffer, const MessageParameters& params)
         iv_buffer);
 }
 
-bool init_lora()
-{
-    if (!device_is_ready(lora_dev)) {
-        LOG_ERR("%s Device not ready", lora_dev->name);
-        return false;
-    }
-
-    // Shared lora config, defined in KeyFobCommon.h
-    LORA_CONFIG.tx = true;
-
-    auto config_rc = lora_config(lora_dev, &LORA_CONFIG);
-    if (config_rc < 0) {
-        LOG_ERR("LoRa config failed!\n");
-        return false;
-    }
-
-    return true;
-}
-
 bool init_button()
 {
     const auto check_and_setup_button = [](const gpio_dt_spec& button, gpio_callback& button_callback) {
@@ -257,37 +239,6 @@ bool init_button()
     return configure_buttons_ret;
 }
 
-bool init_flash()
-{
-    if (!device_is_ready(flash_device)) {
-        LOG_ERR("Flash device %s is not ready\n", flash_device->name);
-        return false;
-    }
-
-    filesystem.offset = FLASH_AREA_OFFSET(storage);
-
-    flash_pages_info info;
-    auto flash_info_rc = flash_get_page_info_by_offs(flash_device, filesystem.offset, &info);
-
-    if (flash_info_rc) {
-        LOG_ERR("Failed to get flash device page info!\n");
-        return false;
-    }
-
-    filesystem.sector_size = info.size;
-    filesystem.sector_count = 3U;
-
-    auto nvs_rc = nvs_init(&filesystem, flash_device->name);
-
-    if (nvs_rc) {
-        LOG_ERR("Failed to init the NVS subsystem!\n");
-        return false;
-    }
-
-    LOG_INF("Started the filesystem!\n");
-    return true;
-}
-
 void enable_low_power_mode()
 {
     // Disable LoRa
@@ -320,9 +271,9 @@ void disable_low_power_mode()
 
 void main()
 {
-    init_lora();
+    init_lora(lora_dev, LoRaTXStatus::Disabled);
+    init_flash(flash_device, filesystem);
     init_button();
-    init_flash();
 
     crypto_device = device_get_binding(CRYPTO_DRV_NAME);
 
