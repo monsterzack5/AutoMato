@@ -16,16 +16,20 @@
 #include <ZephyrAesGCM.h>
 #include <crypto/cipher.h>
 
-// LoRa setup
-BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_ALIAS(lora0), okay),
-    "No default LoRa radio specified in DT");
-
 LOG_MODULE_REGISTER(lora_send);
+
+// LoRa setup
+BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_ALIAS(lora0), okay), "No default LoRa radio specified in Device Tree");
+
 static const device* lora_dev = DEVICE_DT_GET(DT_ALIAS(lora0));
 // ---
 
 // Button Setup
 static K_SEM_DEFINE(button_sem, 0, 1);
+
+BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_ALIAS(lock), okay), "Error, lock button not defined in Device Tree");
+BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_ALIAS(unlock), okay), "Error, unlock button not defined in Device Tree");
+BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_ALIAS(start), okay), "Error, start button not defined in Device Tree");
 
 static const gpio_dt_spec lock_button = GPIO_DT_SPEC_GET(DT_ALIAS(lock), gpios);
 static const gpio_dt_spec unlock_button = GPIO_DT_SPEC_GET(DT_ALIAS(unlock), gpios);
@@ -40,6 +44,7 @@ static nvs_fs filesystem;
 
 #define STORAGE_NODE DT_NODE_BY_FIXED_PARTITION_LABEL(storage)
 #define FLASH_NODE DT_MTD_FROM_FIXED_PARTITION(STORAGE_NODE)
+BUILD_ASSERT(DT_NODE_HAS_STATUS(FLASH_NODE, okay), "Error, Flash not enabled in prj.conf");
 
 static const device* flash_device = DEVICE_DT_GET(FLASH_NODE);
 
@@ -93,7 +98,7 @@ void send_encryption_buffer_via_lora(uint8_t* buffer)
     int rc = lora_send(lora_dev, buffer, ENCRYPTION_BUFFER_SIZE);
 
     if (rc != 0) {
-        printk("Message failed to send!\n");
+        LOG_ERR("Message failed to send!\n");
         return;
     }
 }
@@ -209,7 +214,7 @@ bool init_lora()
 
     auto config_rc = lora_config(lora_dev, &LORA_CONFIG);
     if (config_rc < 0) {
-        printk("LoRa config failed!\n");
+        LOG_ERR("LoRa config failed!\n");
         return false;
     }
 
@@ -265,7 +270,7 @@ bool init_flash()
     auto flash_info_rc = flash_get_page_info_by_offs(flash_device, filesystem.offset, &info);
 
     if (flash_info_rc) {
-        printk("Failed to get flash device page info!\n");
+        LOG_ERR("Failed to get flash device page info!\n");
         return false;
     }
 
@@ -275,12 +280,42 @@ bool init_flash()
     auto nvs_rc = nvs_init(&filesystem, flash_device->name);
 
     if (nvs_rc) {
-        printk("Failed to init the NVS subsystem!\n");
+        LOG_ERR("Failed to init the NVS subsystem!\n");
         return false;
     }
 
-    printk("Started the filesystem!\n");
+    LOG_INF("Started the filesystem!\n");
     return true;
+}
+
+void enable_low_power_mode()
+{
+    // Disable LoRa
+    pm_device_state_set(lora_dev, PM_DEVICE_STATE_OFF);
+
+    // Disable NVS
+    pm_device_state_set(flash_device, PM_DEVICE_STATE_OFF);
+
+    // Disable Crypto
+    pm_device_state_set(crypto_device, PM_DEVICE_STATE_OFF);
+
+    // Go to sleep
+    pm_power_state_set(power_state);
+}
+
+void disable_low_power_mode()
+{
+    // Enable LoRa
+    pm_device_state_set(lora_dev, PM_DEVICE_STATE_ACTIVE);
+
+    // Enable NVS
+    pm_device_state_set(flash_device, PM_DEVICE_STATE_ACTIVE);
+
+    // Enable Crypto
+    pm_device_state_set(crypto_device, PM_DEVICE_STATE_ACTIVE);
+
+    // Wake up!
+    pm_power_state_exit_post_ops(power_state);
 }
 
 void main()
@@ -292,7 +327,7 @@ void main()
     crypto_device = device_get_binding(CRYPTO_DRV_NAME);
 
     if (!crypto_device) {
-        printk("Failed to get the crypto device!\n");
+        LOG_ERR("Failed to get the crypto device!\n");
         return;
     }
 
@@ -304,7 +339,7 @@ void main()
     auto params = get_initial_message_parameters();
     while (1) {
         // Go to sleep
-        pm_power_state_set(power_state);
+        enable_low_power_mode();
 
         // Wait forever for the semaphore
         k_sem_take(&button_sem, K_FOREVER);
@@ -312,9 +347,9 @@ void main()
             continue;
         }
 
-        // Wake up fully, so the CPU is actually fast enough
-        // to encrypt the lora message.
-        pm_power_state_exit_post_ops(power_state);
+        // Wake up fully, to enable LoRa and to make sure
+        // the CPU is fast enough for encryption!
+        disable_low_power_mode();
 
         // Update rolling code and IV
         params = get_next_message_params(params);
