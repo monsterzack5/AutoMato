@@ -7,7 +7,7 @@ build/
 crosscompilling
 
 # Database
-*.db
+*.db*
 
 # Private
 .env
