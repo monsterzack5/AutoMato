@@ -49,7 +49,13 @@ bool AnyType::is_bool() const { return m_type == TypeUsed::b_bool; }
 
 bool AnyType::is_floating() const
 {
-    return (m_type == TypeUsed::f_float || m_type == TypeUsed::d_double);
+    switch (m_type) {
+        case TypeUsed::f_float:
+        case TypeUsed::d_double:
+            return true;
+        default:
+            return false;
+    }
 }
 
 size_t AnyType::size() const
