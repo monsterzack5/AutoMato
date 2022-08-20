@@ -75,9 +75,6 @@ public:
 
     void print() const;
 
-    // TODO: Not this
-    const uint8_t* raw_ptr() const;
-
     TypeUsed get_type() const { return m_type; }
     void set_type(const TypeUsed type) { m_type = type; }
 
@@ -153,37 +150,19 @@ inline bool compare_better_any_type(Conditional cond, const AnyType& lhs, const 
         return false;
     }
 
-    if (lhs.is_int() && rhs.is_int()) {
+    if ((lhs.is_int() || lhs.is_bool()) && (rhs.is_int() || rhs.is_bool())) {
         int64_t lhs_value = lhs;
         int64_t rhs_value = rhs;
         return compare_conditionals(cond, lhs_value, rhs_value);
     }
 
-    if (lhs.is_bool() && rhs.is_bool()) {
-        bool lhs_value = lhs;
-        bool rhs_value = rhs;
+    // At this point, it's safe to assume that either of them are
+    // a floating point type.
 
-        return compare_conditionals(cond, rhs_value, lhs_value);
-    }
+    double lhs_value = lhs;
+    double rhs_value = rhs;
 
-    if (lhs.is_floating() && rhs.is_floating()) {
-        double lhs_value = lhs;
-        double rhs_value = rhs;
-
-        return compare_conditionals(cond, rhs_value, lhs_value);
-    }
-
-    // TODO IMPORTANT:
-    // AnyType's types are mixmatched, so, for now, cast them to
-    // 64 bit ints, and use that.
-
-    int64_t lhs_value = 0;
-    int64_t rhs_value = 0;
-
-    memcpy(&lhs_value, lhs.raw_ptr(), lhs.size());
-    memcpy(&rhs_value, rhs.raw_ptr(), rhs.size());
-
-    return compare_conditionals(cond, lhs_value, rhs_value);
+    return compare_conditionals(cond, rhs_value, lhs_value);
 }
 
 inline size_t type_used_size(TypeUsed type)

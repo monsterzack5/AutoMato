@@ -239,31 +239,6 @@ void AnyType::print() const
 #endif
 }
 
-// This is not a good idea,
-const uint8_t* AnyType::raw_ptr() const
-{
-    switch (m_type) {
-    case TypeUsed::i8:
-        return reinterpret_cast<const uint8_t*>(&i8);
-    case TypeUsed::i16:
-        return reinterpret_cast<const uint8_t*>(&i16);
-    case TypeUsed::i32:
-        return reinterpret_cast<const uint8_t*>(&i32);
-    case TypeUsed::i64:
-        return reinterpret_cast<const uint8_t*>(&i64);
-    case TypeUsed::f_float:
-        return reinterpret_cast<const uint8_t*>(&f_float);
-    case TypeUsed::d_double:
-        return reinterpret_cast<const uint8_t*>(&d_double);
-    case TypeUsed::b_bool:
-        return reinterpret_cast<const uint8_t*>(&b_bool);
-    case TypeUsed::NOT_SET:
-        return nullptr;
-    }
-    __builtin_unreachable();
-    return nullptr;
-}
-
 void AnyType::set_value(int8_t value)
 {
     m_type = TypeUsed::i8;
