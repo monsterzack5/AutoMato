@@ -34,14 +34,3 @@ public:
     // Format and clean entire storage medium.
     virtual bool format() = 0;
 };
-
-// TODO: These should not be in this file.
-inline TypeUsed get_value_type_from_byte(uint8_t byte)
-{
-    return static_cast<TypeUsed>(byte & VALUE_TYPE_BITMAP);
-}
-
-inline EventType get_event_type_from_byte(uint8_t byte)
-{
-    return static_cast<EventType>((byte & EVENT_TYPE_BITMAP) >> 6);
-}

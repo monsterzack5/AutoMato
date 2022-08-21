@@ -110,14 +110,14 @@ bool ESP_LittleFS::seek_curser_to_next_event(File& file, bool return_first_event
 
         already_past_the_first_element = true;
 
-        auto event_type = get_event_type_from_byte(*buffer);
+        auto event_type = Event::event_type_from_byte(*buffer);
 
         if (event_type == EventType::Command) {
             curser += 5;
             continue;
         }
 
-        auto value_type = get_value_type_from_byte(*buffer);
+        auto value_type = Event::type_used_from_byte(*buffer);
         auto value_type_size = type_used_size(value_type);
 
         if (event_type == EventType::Main) {
@@ -278,7 +278,7 @@ bool ESP_LittleFS::load_events(MainEvent main_event_buffer[], Event child_event_
         file.read(buffer_byte, 1);
         file.seek(curser, SeekSet);
 
-        auto event_type = get_event_type_from_byte(*buffer_byte);
+        auto event_type = Event::event_type_from_byte(*buffer_byte);
 
         if (event_type == EventType::Command) {
             file.read(event_buffer, 5);
@@ -288,7 +288,7 @@ bool ESP_LittleFS::load_events(MainEvent main_event_buffer[], Event child_event_
             continue;
         }
 
-        auto value_type = get_value_type_from_byte(*buffer_byte);
+        auto value_type = Event::type_used_from_byte(*buffer_byte);
         auto value_type_size = type_used_size(value_type);
 
         if (event_type == EventType::Main) {
