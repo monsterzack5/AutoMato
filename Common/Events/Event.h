@@ -72,7 +72,7 @@ public:
     Event() = default;
     ~Event() = default;
 
-#ifdef CANRED
+#ifdef PLATFORM_DESKTOP
     void set_condition(const std::string& value);
     void set_interval_unit(const std::string& value);
     static Event from_json(const nlohmann::json& json);
