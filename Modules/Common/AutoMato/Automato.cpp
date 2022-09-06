@@ -599,7 +599,7 @@ void Automato::check_main_events()
             if (is_child_event_for_me(main.event.flow_id, 1)) {
                 // it is for me, call event run next part.
                 event_run_next_part(main.event.flow_id, 1);
-                return;
+                continue;
             }
 
             uint8_t buffer[3];
