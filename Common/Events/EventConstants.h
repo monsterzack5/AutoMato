@@ -29,26 +29,20 @@ enum class EventType : uint8_t {
 #ifndef CANRED
 inline decltype(millis()) interval_to_milliseconds(const IntervalUnit interval_unit, uint8_t interval)
 {
-
-    if (interval_unit == IntervalUnit::NOT_SET) {
+    switch (interval_unit) {
+    case IntervalUnit::MILLISECONDS:
+        return interval;
+    case IntervalUnit::SECONDS:
+        return interval * 1000;
+    case IntervalUnit::MINUTES:
+        return interval * 60 * 1000;
+    case IntervalUnit::HOURS:
+        return interval * 60 * 60 * 1000;
+    default:
         DEBUG_PRINTLN("Error! IntervalUnit::NOT_SET Passed to interval_to_milliseconds!");
         // 1 minute as a sane default.
         return 60000;
     }
-
-    if (interval_unit == IntervalUnit::HOURS) {
-        return interval * 60 * 60 * 1000;
-    }
-
-    if (interval_unit == IntervalUnit::MINUTES) {
-        return interval * 60 * 1000;
-    }
-
-    if (interval_unit == IntervalUnit::SECONDS) {
-        return interval * 1000;
-    }
-
-    return interval;
 }
 #endif
 
