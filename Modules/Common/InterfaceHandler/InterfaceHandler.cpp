@@ -33,6 +33,23 @@ bool InterfaceHandler::try_read_frame(CAN::Frame* frame)
         }
     }
 
+    if (!frame->is_for_me(m_current_node_uid)) {
+        // We read a frame, but that frame is not for this module.
+        return false;
+    }
+
+    if (frame->data[0] == CAN::Protocol::ACKNOWLEDGEMENT) {
+        // We read a frame that's just an ACK, no need to do
+        // any further parsing on it.
+        remove_waiting_on_ack(frame->from_id, frame->data[1]);
+        return false;
+    }
+
+    if (!frame->is_for_everyone()) {
+        // Frames for everyone don't require an ACK
+        send_ack(frame->from_id, frame->data[frame->is_long_frame]);
+    }
+
     return did_read_frame;
 }
 
@@ -60,7 +77,6 @@ void InterfaceHandler::translate_between_interfaces(AutomatoInterface* interface
         return;
     }
 }
-
 
 void InterfaceHandler::add_interface(AutomatoInterface* interface)
 {

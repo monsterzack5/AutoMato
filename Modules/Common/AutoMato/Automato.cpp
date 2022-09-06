@@ -73,37 +73,12 @@ void Automato::loop()
 
     static CAN::Frame frame(CAN::ID(0), nullptr, 0);
 
-    // 1. Handle any Main Events
-    // 2. Update driver_to_check
-    // 3. Continue if we read a frame
-    // 4. Handle any Translations
-    // 5. Continue if the frame we read is for us
-    // 5. if ACK, remove it from our buffer
-    // 6. Pass the frame to handle_frame()
-
     check_main_events();
 
     if (!interfacer.try_read_frame(&frame)) {
         // We didn't read a frame, return so we can
         // give control flow back to the main loop() body.
         return;
-    }
-
-    if (!frame.is_for_me(interfacer.current_node_uid())) {
-        // This frame is not for me.
-        return;
-    }
-
-    if (frame[0] == CAN::Protocol::ACKNOWLEDGEMENT) {
-        // A Module we sent a command to replied with an ACK.
-        interfacer.remove_waiting_on_ack(frame.from_id, frame[1]);
-
-        return;
-    }
-
-    // Frames for everyone don't require an ACK.
-    if (!frame.is_for_everyone()) {
-        interfacer.send_ack(frame.from_id, frame.data[frame.is_long_frame]);
     }
 
     handle_frame(frame);
