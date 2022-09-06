@@ -7,21 +7,19 @@
 #include <string.h> // For memcpy only!
 #include <yield_if_needed.h>
 
-#ifdef ESP32
-// TODO: We need to abstract away any module specific libraries.
-// #    include <FreeRTOS.h>
-#endif
-
 #if defined ESP32 || defined ESP8266
 #    include <ESP_LittleFS.h>
 #endif
 
-Automato::Automato(const char* config_file, uint16_t hardcoded_id /* 0 */, FilesystemInterface* fs_interface /* nullptr */) noexcept
+Automato::Automato(const char* config_file, uint16_t hardcoded_uid /* 0 */, FilesystemInterface* fs_interface /* nullptr */) noexcept
     : m_config_file(config_file)
-    , m_current_node_uid(hardcoded_id)
     , m_filesystem(fs_interface)
 {
     // TODO: If not given a filesystem interface, try and pick the best one.
+
+    if (hardcoded_uid) {
+        interfacer.set_current_node_uid(hardcoded_uid);
+    }
 
     if (!fs_interface) {
 #if defined ESP32 || defined ESP8266
@@ -42,32 +40,37 @@ void Automato::setup()
 
     reload_event_buffers();
 
-    // Mark every slot in the ACK buffer as available for writing
-    memset(m_ack_buffer, 0, MAX_ACK_BUFFERS);
-
     YIELD_IF_NEEDED();
 
-    if (m_current_node_uid == 0) {
-        // We were not given a hardcoded uid.
-        m_current_node_uid = m_filesystem->load_uid();
-        if (m_current_node_uid == 0) {
-            // TODO: Maybe flash the LED
-            m_current_node_uid = CAN::Frame::get_temporary_can_id();
-            // We don't have an ID yet, but we still need to wait for
-            // the MCM to come online.
-            send_check_in_frame();
-            ask_for_new_id();
-            return;
-        }
+    if (interfacer.current_node_uid() > 0) {
+        // We have a hardcoded UID
+        return;
     }
 
+    auto uid_from_fs = m_filesystem->load_uid();
+
+    if (uid_from_fs > 0) {
+        interfacer.set_current_node_uid(uid_from_fs);
+        return;
+    }
+
+    // We don't have a hardcoded uid, and
+    // we don't have one stored in the FS
+    // Let's ask the MCM for one
+
+    // We still need a uid to ask the MCM for one
+    auto random_uid = CAN::Frame::get_temporary_can_id();
+
+    interfacer.set_current_node_uid(random_uid);
+
     send_check_in_frame();
+    ask_for_new_id();
 }
 
 void Automato::loop()
 {
     YIELD_IF_NEEDED();
-    static uint8_t interface_to_check = 0;
+
     static CAN::Frame frame(CAN::ID(0), nullptr, 0);
 
     // 1. Handle any Main Events
@@ -80,45 +83,27 @@ void Automato::loop()
 
     check_main_events();
 
-    interface_to_check = (interface_to_check == m_interfaces_index - 1) ? 0 : interface_to_check + 1;
-
-    if (!m_interfaces[interface_to_check]->read_frame(&frame)) {
+    if (!interfacer.try_read_frame(&frame)) {
         // We didn't read a frame, return so we can
         // give control flow back to the main loop() body.
         return;
     }
 
-    YIELD_IF_NEEDED();
-
-    // In our current implementation of translate_between_layers
-    // We always redirect frames, even if they're specifically
-    // for the current module. This is to better facilitate
-    // debugging.
-
-    // TODO: We currently translate everything, including ACKs
-    //       and UPDATE_INFO frames (even if they're for us)
-    for (uint8_t i = 0; i < m_translation_layers_index; i += 1) {
-        if (m_translation_layers[i].from_driver != m_interfaces[interface_to_check]) {
-            continue;
-        }
-
-        m_translation_layers[i].to_driver->send_frame(frame);
-    }
-
-    if (!frame.is_for_me(m_current_node_uid)) {
+    if (!frame.is_for_me(interfacer.current_node_uid())) {
         // This frame is not for me.
         return;
     }
 
     if (frame[0] == CAN::Protocol::ACKNOWLEDGEMENT) {
         // A Module we sent a command to replied with an ACK.
-        remove_waiting_on_ack(frame.from_id, frame[1]);
+        interfacer.remove_waiting_on_ack(frame.from_id, frame[1]);
+
         return;
     }
 
     // Frames for everyone don't require an ACK.
     if (!frame.is_for_everyone()) {
-        send_ack(frame.from_id, frame.data[frame.is_long_frame]);
+        interfacer.send_ack(frame.from_id, frame.data[frame.is_long_frame]);
     }
 
     handle_frame(frame);
@@ -164,7 +149,7 @@ void Automato::handle_frame(const CAN::Frame& frame)
 
         if (group_index == CAN::NOT_FOUND) {
             // We are out of buffers, reply with an error!
-            send_error_frame(frame.from_id, CAN::GENERIC_ERROR::BUSY);
+            interfacer.send_error_frame(frame.from_id, CAN::GENERIC_ERROR::BUSY);
             return;
         }
 
@@ -184,7 +169,7 @@ void Automato::handle_frame(const CAN::Frame& frame)
         if (m_LF_group_index[group_index] > 64) {
             // Frame is too large for us!
             clear_long_frame_buffer(m_long_frame_buffer[group_index]);
-            send_error_frame(frame.from_id, CAN::GENERIC_ERROR::FRAME_TOO_LONG);
+            interfacer.send_error_frame(frame.from_id, CAN::GENERIC_ERROR::FRAME_TOO_LONG);
             return;
         }
     }
@@ -208,9 +193,11 @@ void Automato::parse_frame(uint16_t from_id, const uint8_t data[], uint16_t can_
 
     switch (data[0]) {
     case CAN::Protocol::REPLY_NEW_UID: {
+        uint16_t new_uid = 0;
 
-        memcpy(&m_current_node_uid, data, 2);
-        m_filesystem->store_uid(m_current_node_uid);
+        memcpy(&new_uid, data, 2);
+        m_filesystem->store_uid(new_uid);
+        interfacer.set_current_node_uid(new_uid);
         break;
     }
 
@@ -298,133 +285,9 @@ void Automato::parse_frame(uint16_t from_id, const uint8_t data[], uint16_t can_
         buffer[0] = CAN::Protocol::ERROR_GENERIC;
         buffer[1] = CAN::GENERIC_ERROR::PROTOCOL_NOT_SUPPORTED;
 
-        send_buffer_to_every_interface(from_id, buffer, 2);
+        interfacer.send_buffer_to_every_interface(from_id, buffer, 2);
         break;
     }
-    }
-}
-
-// TODO: This function chunks data into 8 byte chunks, for CAN.
-//       This function has not been updated to properly use our
-//       new driver system.
-
-void Automato::send_buffer_to_every_interface(uint16_t to_id, uint8_t data[], uint8_t data_size, uint8_t priority /* CAN::Priority::NORMAL */)
-{
-    CAN::FrameFormat is_long_frame = (data_size > 8) ? CAN::FrameFormat::Long : CAN::FrameFormat::Standard;
-    CAN::ID can_id = CAN::ID(m_current_node_uid, to_id, priority, is_long_frame);
-
-    if (data_size == 0) {
-        // Empty frame
-
-        send_frame_to_every_interface(CAN::Frame { can_id, nullptr, 0 });
-        return;
-    }
-
-    if (is_long_frame == CAN::FrameFormat::Standard) {
-        // data_size <= 8
-
-        send_frame_to_every_interface(CAN::Frame { can_id, data, data_size });
-        return;
-    }
-
-    // TODO: These comments are CAN Specific.
-
-    // we can only send 7 at a time, as we need
-    // the first byte to store the long frame uid
-    uint32_t bytes_to_send = data_size;
-
-    // a LongFrame group is marked as finished when
-    // the last frame is less than 7 bytes
-    bool need_extra_frame = (data_size % 7) == 0;
-    uint8_t long_frame_uid = CAN::Frame::get_long_frame_uid();
-
-    CAN::Frame frame(can_id, nullptr, 0);
-    frame.data[0] = long_frame_uid;
-
-    while (bytes_to_send) {
-        YIELD_IF_NEEDED();
-
-        //                min(7u, bytes_to_send);
-        uint8_t can_dlc = (7u > bytes_to_send) ? bytes_to_send : 7u;
-
-        memcpy(&frame[1], &data[data_size - bytes_to_send], can_dlc);
-
-        bytes_to_send -= can_dlc;
-        send_frame_to_every_interface(frame);
-    }
-
-    if (need_extra_frame) {
-        // Send an empty frame.
-        send_frame_to_every_interface(CAN::Frame { can_id, nullptr, 0 });
-    }
-}
-
-void Automato::send_frame_to_every_interface(const CAN::Frame& frame)
-{
-    // Don't send acks for acks
-    // Frames meant for anyone do not require ACKs
-    if (frame[0] != CAN::Protocol::ACKNOWLEDGEMENT && !frame.is_for_everyone()) {
-        // In Long Frames, the first byte we send is the frame uid
-        // and the second is the command byte.
-        add_waiting_on_ack(frame.to_id, frame[frame.is_long_frame]);
-    }
-
-    for (uint8_t i = 0; i < m_interfaces_index; i += 1) {
-        m_interfaces[i]->send_frame(frame);
-    }
-}
-
-void Automato::add_waiting_on_ack(uint16_t module_uid, uint8_t command_id)
-{
-    // Find the first empty slot in the ack buffer
-    for (uint8_t i = 0; i < MAX_ACK_BUFFERS * 2; i += 2) {
-        if (m_ack_buffer[i] == 0) {
-            // this is an empty slot!
-            uint32_t packed = ((static_cast<uint32_t>(module_uid) << 16) | command_id);
-            m_ack_buffer[i] = packed;
-            m_ack_buffer[i + 2] = millis();
-            return;
-        }
-    }
-}
-
-void Automato::remove_waiting_on_ack(uint16_t module_uid, uint8_t command_id)
-{
-    uint32_t packed = ((static_cast<uint32_t>(module_uid) << 16) | command_id);
-    for (uint8_t i = 0; i < MAX_ACK_BUFFERS * 2; i += 2) {
-        if (m_ack_buffer[i] == packed) {
-            m_ack_buffer[i] = 0;
-            m_ack_buffer[i + 1] = 0;
-            break;
-        }
-    }
-}
-
-void Automato::send_ack(uint16_t module_uid, uint8_t command_id)
-{
-    uint8_t buffer[2];
-    buffer[0] = CAN::Protocol::ACKNOWLEDGEMENT;
-    buffer[1] = command_id;
-
-    send_buffer_to_every_interface(module_uid, buffer, 2);
-}
-
-void Automato::check_for_old_acks(uint64_t current_time)
-{
-    for (uint8_t i = 0; i < MAX_ACK_BUFFERS * 2; i += 2) {
-        // I don't think this is an off by one error, but I am not sure
-        if (m_ack_buffer[i + 1] > current_time + seconds_to_ms(3)) {
-            // We are not storing enough information currently
-            // in order to actually resend a reply, so lets just
-            // send a placeholder for now.
-            uint16_t module_uid = m_ack_buffer[i] >> 16;
-
-            uint8_t buffer[2];
-            buffer[0] = CAN::Protocol::ERROR_GENERIC;
-            buffer[1] = CAN::GENERIC_ERROR::FAILED_TO_READ_MESSAGE;
-
-            send_buffer_to_every_interface(module_uid, buffer, 2);
-        }
     }
 }
 
@@ -444,7 +307,7 @@ void Automato::send_stored_configuration()
 
     uint8_t long_frame_uid = CAN::Frame::get_long_frame_uid();
 
-    CAN::ID id(m_current_node_uid, CAN::UID::MCM, CAN::Priority::MEDIUM, CAN::FrameFormat::Long);
+    CAN::ID id(interfacer.current_node_uid(), CAN::UID::MCM, CAN::Priority::MEDIUM, CAN::FrameFormat::Long);
 
     uint8_t buffer[8];
 
@@ -462,7 +325,7 @@ void Automato::send_stored_configuration()
         bytes_sent += 1;
     }
 
-    send_frame_to_every_interface(frame);
+    interfacer.send_frame_to_every_interface(frame);
 
     for (;;) {
         YIELD_IF_NEEDED();
@@ -471,7 +334,7 @@ void Automato::send_stored_configuration()
                 frame.data[i + 1] = pgm_read_byte(&m_config_file[bytes_sent]);
                 bytes_sent += 1;
             }
-            send_frame_to_every_interface(frame);
+            interfacer.send_frame_to_every_interface(frame);
             continue;
         }
 
@@ -483,29 +346,19 @@ void Automato::send_stored_configuration()
         }
 
         frame.can_dlc = index;
-        send_frame_to_every_interface(frame);
+        interfacer.send_frame_to_every_interface(frame);
         break;
     }
 
     // Check to see if we need to send another frame
     if (frame.can_dlc == 8) {
         // send empty frame
-        send_buffer_to_every_interface(CAN::UID::MCM, nullptr, 0);
+        interfacer.send_buffer_to_every_interface(CAN::UID::MCM, nullptr, 0);
     }
 
     DEBUG_PRINTLN("Done sending!");
 
     m_CAN_is_locked = false;
-}
-
-// Only Pass CAN::GENERIC_ERROR::*
-void Automato::send_error_frame(uint16_t to_id, uint8_t which_error)
-{
-    uint8_t buffer[2];
-    buffer[0] = CAN::Protocol::ERROR_GENERIC;
-    buffer[1] = which_error;
-
-    send_buffer_to_every_interface(to_id, buffer, 2, CAN::Priority::IMPORTANT);
 }
 
 void Automato::send_check_in_frame()
@@ -527,18 +380,15 @@ void Automato::send_check_in_frame()
         auto current_time = millis();
         if (current_time > time_last_sent + ms_between_sends) {
             time_last_sent = current_time;
-            send_buffer_to_every_interface(CAN::UID::MCM, buffer, 1, CAN::Priority::MEDIUM);
+            interfacer.send_buffer_to_every_interface(CAN::UID::MCM, buffer, 1, CAN::Priority::MEDIUM);
             DEBUG_PRINTLN("Screaming into the void");
         }
 
-        // Check every interface for a response.
-        for (uint8_t i = 0; i < m_interfaces_index; i += 1) {
-            if (m_interfaces[i]->read_frame(&frame)) {
-                if (frame.is_only_for_me(m_current_node_uid)) {
-                    DEBUG_PRINTLN("MCM Said We're Good To Go!");
-                    return;
-                }
-            }
+        bool did_read_frame = interfacer.try_read_frame(&frame);
+
+        if (did_read_frame && frame.is_only_for_me(interfacer.current_node_uid())) {
+            DEBUG_PRINTLN("MCM Said we're good to go!");
+            return;
         }
     }
 }
@@ -607,7 +457,7 @@ void Automato::check_main_events()
             buffer[1] = main.event.flow_id;
             buffer[2] = 1; // Events always call section number 1
 
-            send_buffer_to_every_interface(CAN::UID::ANY, buffer, 3);
+            interfacer.send_buffer_to_every_interface(CAN::UID::ANY, buffer, 3);
         }
     }
 }
@@ -637,7 +487,7 @@ void Automato::send_stored_events()
     // TODO: We Assume the MCM Called us
     //       but that might not be correct.
 
-    CAN::ID id(m_current_node_uid, CAN::UID::MCM, CAN::Priority::NORMAL, CAN::FrameFormat::Standard);
+    CAN::ID id(interfacer.current_node_uid(), CAN::UID::MCM, CAN::Priority::NORMAL, CAN::FrameFormat::Standard);
     CAN::Frame frame(id, nullptr, 8);
 
     // first run, read 6 bytes.
@@ -648,7 +498,7 @@ void Automato::send_stored_events()
         frame[0] = CAN::Protocol::REPLY_EVENT_SEND_STORED;
 
         frame.can_dlc = 1;
-        send_frame_to_every_interface(frame);
+        interfacer.send_frame_to_every_interface(frame);
         return;
     }
 
@@ -661,7 +511,7 @@ void Automato::send_stored_events()
     frame.is_long_frame = true;
 
     frame.can_dlc = bytes_read + 2;
-    send_frame_to_every_interface(frame);
+    interfacer.send_frame_to_every_interface(frame);
 
     if (bytes_read < 6) {
         // We have sent all we need to.
@@ -679,13 +529,13 @@ void Automato::send_stored_events()
             // + 1 for long frame group uid
             frame.can_dlc = bytes_read + 1;
             // Ah yeah, we are sending 7 bytes
-            send_frame_to_every_interface(frame);
+            interfacer.send_frame_to_every_interface(frame);
             return;
         }
 
         // we're here if we have read 7 bytes
         offset += 7;
-        send_frame_to_every_interface(frame);
+        interfacer.send_frame_to_every_interface(frame);
     }
 }
 
@@ -720,7 +570,7 @@ void Automato::event_run_next_part(uint8_t flow_id, uint8_t section_number)
         buffer[0] = CAN::Protocol::EVENT_RUN_NEXT_PART;
         buffer[1] = flow_id;
         buffer[2] = next_section_number;
-        send_buffer_to_every_interface(CAN::UID::ANY, buffer, 3);
+        interfacer.send_buffer_to_every_interface(CAN::UID::ANY, buffer, 3);
     }
 }
 
@@ -756,7 +606,7 @@ bool Automato::external_call_command_function(uint16_t from_id, uint8_t command_
     }
 
     if (command_index == CAN::NOT_FOUND) {
-        send_error_frame(from_id, CAN::GENERIC_ERROR::COMMAND_NOT_FOUND);
+        interfacer.send_error_frame(from_id, CAN::GENERIC_ERROR::COMMAND_NOT_FOUND);
         return false;
     }
 
@@ -768,7 +618,7 @@ bool Automato::external_call_command_function(uint16_t from_id, uint8_t command_
         buffer[0] = CAN::Protocol::REPLY_COMMAND;
         buffer[1] = command_id;
 
-        send_buffer_to_every_interface(from_id, buffer, 2);
+        interfacer.send_buffer_to_every_interface(from_id, buffer, 2);
         return true;
     }
 
@@ -781,7 +631,7 @@ bool Automato::external_call_command_function(uint16_t from_id, uint8_t command_
 
     uint8_t bytes_needed = function_output.serialize(&buffer[3]);
 
-    send_buffer_to_every_interface(from_id, buffer, bytes_needed + 3);
+    interfacer.send_buffer_to_every_interface(from_id, buffer, bytes_needed + 3);
 
     return true;
 }
@@ -796,42 +646,15 @@ void Automato::ask_for_new_id()
     uint8_t buffer[1];
     buffer[0] = CAN::Protocol::NEW_UID;
 
-    send_buffer_to_every_interface(CAN::UID::MCM, buffer, 1, CAN::Priority::CRITICAL);
+    interfacer.send_buffer_to_every_interface(CAN::UID::MCM, buffer, 1, CAN::Priority::CRITICAL);
 }
 
 void Automato::add_interface(AutomatoInterface* interface)
 {
-    if (interface) {
-        // interface is valid
-        m_interfaces[m_interfaces_index++] = interface;
-        return;
-    }
-
-    DEBUG_PRINTLN("INVALID INTERFACE POINTER PASSED TO ADD_INTERFACE!");
-    // We should lock up here probably.
+    interfacer.add_interface(interface);
 }
 
 void Automato::translate_between_interfaces(AutomatoInterface* interface1, AutomatoInterface* interface2, TranslationMode mode)
 {
-    if (interface1 == interface2) {
-        // No-op
-        DEBUG_PRINTLN("Translate between layers called for the same interface!");
-        return;
-    }
-
-    if (!interface1 || !interface2) {
-        DEBUG_PRINTLN("INVALID DRIVER POINTERS PASSED TO translate_drivers_for!");
-        return;
-    }
-
-    if (mode == TranslationMode::Bidirectional) {
-        m_translation_layers[m_translation_layers_index++] = TranslationLayer { interface1, interface2 };
-        m_translation_layers[m_translation_layers_index++] = TranslationLayer { interface2, interface1 };
-        return;
-    }
-
-    if (mode == TranslationMode::Unidirectional) {
-        m_translation_layers[m_translation_layers_index++] = TranslationLayer { interface1, interface2 };
-        return;
-    }
+    interfacer.translate_between_interfaces(interface1, interface2, mode);
 }
