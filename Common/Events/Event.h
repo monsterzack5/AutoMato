@@ -2,9 +2,8 @@
 
 #include <AnyType.h>
 #include <EventConstants.h>
-#include <stdint.h>
-
 #include <Platform.h>
+#include <stdint.h>
 
 #ifdef PLATFORM_DESKTOP
 #    include <Database.h>
