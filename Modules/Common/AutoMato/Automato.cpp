@@ -2,7 +2,6 @@
 #include <CanFrame.h>
 #include <CanSerializer.h>
 #include <Log.hpp>
-#include <algorithm>
 #include <seconds_to_ms.h>
 #include <string.h> // For memcpy only!
 #include <yield_if_needed.h>
@@ -33,10 +32,6 @@ Automato::Automato(const char* config_file, uint16_t hardcoded_uid /* 0 */, File
 
 void Automato::setup()
 {
-    // Mark every long frame group as available for writing
-    for (uint8_t i = 0; i < MAX_LONG_FRAME_GROUPS; i += 1) {
-        clear_long_frame_buffer(m_long_frame_buffer[i]);
-    }
 
     reload_event_buffers();
 
@@ -84,29 +79,6 @@ void Automato::loop()
     handle_frame(frame);
 }
 
-uint8_t Automato::find_uid_index(uint8_t uid) const
-{
-    for (uint8_t i = 0; i < MAX_LONG_FRAME_GROUPS; i += 1) {
-        if (m_long_frame_buffer[i][0] == uid) {
-            return i;
-        }
-    }
-
-    return CAN::NOT_FOUND;
-}
-
-uint8_t Automato::find_free_long_frame_group() const
-{
-    // find first group where arr[i][0] == \0
-
-    for (uint8_t i = 0; i < MAX_LONG_FRAME_GROUPS; i += 1) {
-        if (m_long_frame_buffer[i][0] == '\0') {
-            return i;
-        }
-    }
-    return CAN::NOT_FOUND;
-}
-
 void Automato::handle_frame(const CAN::Frame& frame)
 {
     YIELD_IF_NEEDED();
@@ -117,44 +89,18 @@ void Automato::handle_frame(const CAN::Frame& frame)
         return;
     }
 
-    uint8_t group_index = find_uid_index(frame[0]);
+    uint8_t long_frame_index = long_frame_handler.append(frame.data, frame.can_dlc);
 
-    if (group_index == CAN::NOT_FOUND) {
-        group_index = find_free_long_frame_group();
-
-        if (group_index == CAN::NOT_FOUND) {
-            // We are out of buffers, reply with an error!
-            interfacer.send_error_frame(frame.from_id, CAN::GENERIC_ERROR::BUSY);
-            return;
-        }
-
-        // This is the first time we have seen this frame group
-        m_long_frame_buffer[group_index][0] = frame[0];
-        m_LF_group_index[group_index] = 8; // what is this doing?
-        for (uint8_t i = 1; i < frame.can_dlc; i += 1) {
-            m_long_frame_buffer[group_index][i] = frame[i];
-        }
+    if (frame.can_dlc == 8) {
+        // There's more frames in this group
         return;
     }
 
-    // This is a long frame group we are already storing.
-    for (uint8_t i = 1; i < frame.can_dlc; i += 1) {
-        m_long_frame_buffer[group_index][i + m_LF_group_index[group_index]] = frame[i];
+    const uint8_t* long_frame_data_ptr = long_frame_handler.get_data_ptr(long_frame_index);
+    uint8_t long_frame_length = long_frame_handler.length(long_frame_index);
 
-        if (m_LF_group_index[group_index] > 64) {
-            // Frame is too large for us!
-            clear_long_frame_buffer(m_long_frame_buffer[group_index]);
-            interfacer.send_error_frame(frame.from_id, CAN::GENERIC_ERROR::FRAME_TOO_LONG);
-            return;
-        }
-    }
-
-    m_LF_group_index[group_index] += frame.can_dlc;
-
-    if (frame.can_dlc < 8) {
-        parse_frame(frame.from_id, m_long_frame_buffer[group_index], m_LF_group_index[group_index]);
-        clear_long_frame_buffer(m_long_frame_buffer[group_index]);
-    }
+    parse_frame(frame.from_id, long_frame_data_ptr, long_frame_length);
+    long_frame_handler.clear_data(long_frame_index);
 }
 
 void Automato::parse_frame(uint16_t from_id, const uint8_t data[], uint16_t can_dlc)
@@ -609,11 +555,6 @@ bool Automato::external_call_command_function(uint16_t from_id, uint8_t command_
     interfacer.send_buffer_to_every_interface(from_id, buffer, bytes_needed + 3);
 
     return true;
-}
-
-void Automato::clear_long_frame_buffer(uint8_t buffer[])
-{
-    memset(buffer, '\0', MAX_BYTES_PER_LF_GROUP);
 }
 
 void Automato::ask_for_new_id()

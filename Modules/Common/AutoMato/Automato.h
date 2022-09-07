@@ -22,16 +22,11 @@
 #include <CanFrame.h>
 #include <FilesystemInterface.h>
 #include <InterfaceHandler.h>
+#include <LongFrameHandler.h>
 #include <stdint.h>
 
 // TODO: Not sure if sharing this libary is the best idea
 #include <Event.h>
-
-// Max number of long frame groups we can handle at a time
-const uint8_t MAX_LONG_FRAME_GROUPS = 4;
-
-// Max number of bytes we can handle per long frame group
-const uint8_t MAX_BYTES_PER_LF_GROUP = 64;
 
 const uint8_t AMOUNT_OF_COMMANDS = 4; // TODO: Not This
 
@@ -89,14 +84,7 @@ private:
     };
 
     // Long frames
-    void clear_long_frame_buffer(uint8_t buffer[]);
-    // TODO: This should be improved.
-    uint8_t get_long_frame_uid() const { return rand() % 255; };
-    uint8_t find_uid_index(uint8_t uid) const;
-    uint8_t find_free_long_frame_group() const;
-
-    uint8_t m_long_frame_buffer[MAX_LONG_FRAME_GROUPS][MAX_BYTES_PER_LF_GROUP];
-    uint8_t m_LF_group_index[MAX_LONG_FRAME_GROUPS];
+    LongFrameHandler long_frame_handler;
 
     // Command Functions
     bool external_call_command_function(uint16_t from_id, uint8_t command_id, const void* input_data);
