@@ -20,6 +20,7 @@
 #include <AnyType.h>
 #include <AutomatoInterface.h>
 #include <CanFrame.h>
+#include <CommandHandler.h>
 #include <FilesystemInterface.h>
 #include <InterfaceHandler.h>
 #include <LongFrameHandler.h>
@@ -27,8 +28,6 @@
 
 // TODO: Not sure if sharing this libary is the best idea
 #include <Event.h>
-
-const uint8_t AMOUNT_OF_COMMANDS = 4; // TODO: Not This
 
 // Defines the amount of extra uids we can handle.
 const uint8_t AMOUNT_OF_EXTRA_UIDS_TO_HANDLE = 2;
@@ -38,8 +37,6 @@ const uint8_t AMOUNT_OF_MAIN_EVENTS = 3;
 
 // Defines the amount of child events we can store
 const uint8_t AMOUNT_OF_CHILD_EVENTS = 8;
-
-using CommandFunction = AnyType (*)(const void*);
 
 class Automato {
 public:
@@ -78,20 +75,12 @@ private:
     // Filesystem interface
     FilesystemInterface* m_filesystem { nullptr };
 
-    struct Command {
-        uint8_t id;
-        CommandFunction func;
-    };
-
     // Long frames
     LongFrameHandler long_frame_handler;
 
     // Command Functions
-    bool external_call_command_function(uint16_t from_id, uint8_t command_id, const void* input_data);
-    AnyType internal_call_command_function(uint8_t command_id) const;
-
-    Command m_command_buffer[AMOUNT_OF_COMMANDS]; // TODO: Automagically Compute This
-    uint8_t m_command_buffer_index { 0 };
+    CommandHandler command_handler;
+    bool external_run_command(uint16_t from_id, uint8_t command_id, const void* input_data);
 
     // Broadcast Events
     // TODO: This is in a state of flux.

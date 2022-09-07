@@ -125,7 +125,7 @@ void Automato::parse_frame(uint16_t from_id, const uint8_t data[], uint16_t can_
     case CAN::Protocol::COMMAND: {
         // We're told to run a command!
 
-        external_call_command_function(from_id, data[1], nullptr);
+        external_run_command(from_id, data[1], nullptr);
         break;
     }
 
@@ -136,7 +136,7 @@ void Automato::parse_frame(uint16_t from_id, const uint8_t data[], uint16_t can_
         // to an unknown user function as the correct type.
 
         const void* data_ptr = &data[2];
-        external_call_command_function(from_id, data[1], data_ptr);
+        external_run_command(from_id, data[1], data_ptr);
         break;
     }
 
@@ -316,33 +316,7 @@ void Automato::send_check_in_frame()
 
 void Automato::register_callback(uint8_t command_id, const CommandFunction& function)
 {
-    m_command_buffer[m_command_buffer_index++] = { command_id, function };
-}
-
-AnyType Automato::internal_call_command_function(uint8_t command_id) const
-{
-    uint8_t command_index = CAN::NOT_FOUND;
-    for (uint8_t i = 0; i < m_command_buffer_index; i += 1) {
-        if (m_command_buffer[i].id == command_id) {
-            command_index = i;
-            break;
-        }
-    }
-
-    if (command_index == CAN::NOT_FOUND) {
-        // This happens when we're storing Events
-        // that are out of date with the actual code
-        // of the module.
-        // TODO: We should report this and update
-        // all of our saved events.
-        DEBUG_PRINTLN("ERROR: internal_call_command_function: command ID not found.");
-        return {};
-    }
-
-    // TODO: Don't use this on functions that take input
-    AnyType data = m_command_buffer[command_index].func(nullptr);
-
-    return data;
+    command_handler.register_function(command_id, function);
 }
 
 void Automato::check_main_events()
@@ -361,7 +335,7 @@ void Automato::check_main_events()
 
         YIELD_IF_NEEDED();
 
-        AnyType function_output = internal_call_command_function(main.event.this_function_id);
+        AnyType function_output = command_handler.run(main.event.this_function_id);
         AnyType value_to_compare = main.event.value_to_check;
 
         if (compare_better_any_type(main.event.conditional, function_output, value_to_compare)) {
@@ -499,12 +473,12 @@ void Automato::event_run_next_part(uint8_t flow_id, uint8_t section_number)
 uint8_t Automato::run_child_event(Event event)
 {
     if (event.event_type == EventType::Command) {
-        internal_call_command_function(event.this_function_id);
+        command_handler.run(event.this_function_id);
         return event.next_section;
     }
 
-    if (event.event_type == EventType::If) {
-        AnyType function_output = internal_call_command_function(event.this_function_id);
+    if (event.event_type == EventType::If) {       
+        AnyType function_output = command_handler.run(event.this_function_id);
         AnyType value_to_compare = event.value_to_check;
 
         bool comparison_output = compare_better_any_type(event.conditional, function_output, value_to_compare);
@@ -516,22 +490,9 @@ uint8_t Automato::run_child_event(Event event)
     return 0;
 }
 
-bool Automato::external_call_command_function(uint16_t from_id, uint8_t command_id, const void* function_input)
+bool Automato::external_run_command(uint16_t from_id, uint8_t command_id, const void* function_input)
 {
-    uint8_t command_index = CAN::NOT_FOUND;
-    for (uint8_t i = 0; i < m_command_buffer_index; i += 1) {
-        if (m_command_buffer[i].id == command_id) {
-            command_index = i;
-            break;
-        }
-    }
-
-    if (command_index == CAN::NOT_FOUND) {
-        interfacer.send_error_frame(from_id, CAN::GENERIC_ERROR::COMMAND_NOT_FOUND);
-        return false;
-    }
-
-    AnyType function_output = m_command_buffer[command_index].func(function_input);
+    auto function_output = command_handler.run(command_id);
 
     if (function_output.get_type() == TypeUsed::NOT_SET) {
         // Theres nothing to return.
